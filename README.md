@@ -11,6 +11,7 @@ Lightweight, self-contained parser for Codex CLI JSONL logs. It turns raw log li
 ## Usage
 CLI:
 - `python3 parsecodexlog.py sample.jsonl > parsed.json`
+- `python3 analyze_fail.py logs/` — recursively scans JSONL logs, prints files/functions with `tool call error:` outputs, and summarizes failure counts per function.
 
 Library:
 ```python
