@@ -15,8 +15,8 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
 
-IGNORED_RECORD_TYPES = {"turn_context"}
-IGNORED_EVENT_SUBTYPES = {"token_count"}
+IGNORED_RECORD_TYPES: set[str] = set()
+IGNORED_EVENT_SUBTYPES: set[str] = set()
 IGNORED_RESPONSE_SUBTYPES = {"reasoning"}
 
 
@@ -30,6 +30,7 @@ class ParsedMessage:
     name: Optional[str] = None
     arguments: Optional[Any] = None
     output: Optional[Any] = None
+    metadata: Optional[Dict[str, Any]] = None
     source_line: Optional[int] = None
 
     def to_dict(self) -> Dict[str, Any]:
@@ -42,6 +43,7 @@ class ParsedMessage:
             "name": self.name,
             "arguments": self.arguments,
             "output": self.output,
+            "metadata": self.metadata,
             "source_line": self.source_line,
         }
 
@@ -50,7 +52,7 @@ def parse_codex_log(path: Path) -> List[ParsedMessage]:
     """
     Parse a Codex JSONL log into a list of ParsedMessage objects.
 
-    - Ignores turn context blocks, token usage metrics, and encrypted reasoning notes.
+    - Preserves turn context blocks, token usage metrics, and ignores only encrypted reasoning notes.
     - Correlates function calls with their outputs via call_id.
     """
     messages: List[ParsedMessage] = []
@@ -83,13 +85,27 @@ def _consume_record(
     timestamp = str(record.get("timestamp", "unknown"))
     payload = record.get("payload") or {}
 
+    if rectype == "turn_context":
+        messages.append(
+            ParsedMessage(
+                timestamp=timestamp,
+                type="turn_context",
+                role="system",
+                content=_format_json(payload),
+                metadata=payload,
+                source_line=lineno,
+            )
+        )
+        return
+
     if rectype == "session_meta":
         messages.append(
             ParsedMessage(
                 timestamp=timestamp,
                 type="session_meta",
                 role="system",
-                content=json.dumps(payload, ensure_ascii=False, indent=2),
+                content=_format_json(payload),
+                metadata=payload,
                 source_line=lineno,
             )
         )
@@ -109,7 +125,8 @@ def _consume_record(
             timestamp=timestamp,
             type=rectype or "unknown",
             role=None,
-            content=json.dumps(payload, ensure_ascii=False, indent=2),
+            content=_format_json(payload),
+            metadata=payload,
             source_line=lineno,
         )
     )
@@ -131,12 +148,23 @@ def _handle_event_msg(
     elif subtype == "agent_message":
         role = "assistant"
 
+    metadata: Optional[Dict[str, Any]] = None
+    if subtype == "token_count":
+        metadata = payload
+        content = _summarize_token_count(payload)
+    else:
+        content = _coerce_to_text(payload.get("message"))
+        if content is None and payload:
+            metadata = payload
+            content = _format_json(payload)
+
     messages.append(
         ParsedMessage(
             timestamp=timestamp,
             type=f"event:{subtype or 'unknown'}",
             role=role,
-            content=_coerce_to_text(payload.get("message")),
+            content=content,
+            metadata=metadata,
             source_line=lineno,
         )
     )
@@ -210,7 +238,8 @@ def _handle_response_item(
             timestamp=timestamp,
             type=f"response:{subtype or 'unknown'}",
             role=payload.get("role"),
-            content=json.dumps(payload, ensure_ascii=False, indent=2),
+            content=_format_json(payload),
+            metadata=payload,
             source_line=lineno,
         )
     )
@@ -248,6 +277,47 @@ def _coerce_to_text(value: Any) -> Optional[str]:
     if isinstance(value, str):
         return value
     return str(value)
+
+
+def _format_json(value: Any) -> str:
+    if value is None:
+        return "null"
+    return json.dumps(value, ensure_ascii=False, indent=2)
+
+
+def _summarize_token_count(payload: Dict[str, Any]) -> str:
+    info = payload.get("info") or {}
+    total_usage = info.get("total_token_usage") or {}
+    last_usage = info.get("last_token_usage") or {}
+
+    segments: List[str] = []
+    if total_usage:
+        segments.append(f"total({_format_usage(total_usage)})")
+    if last_usage:
+        segments.append(f"last({_format_usage(last_usage)})")
+    ctx_window = info.get("model_context_window")
+    if ctx_window is not None:
+        segments.append(f"context_window={ctx_window}")
+
+    if segments:
+        return "; ".join(segments)
+    return _format_json(payload)
+
+
+def _format_usage(usage: Dict[str, Any]) -> str:
+    labels = {
+        "input_tokens": "in",
+        "cached_input_tokens": "cached",
+        "output_tokens": "out",
+        "reasoning_output_tokens": "reasoning",
+        "total_tokens": "total",
+    }
+    parts: List[str] = []
+    for key, label in labels.items():
+        value = usage.get(key)
+        if value is not None:
+            parts.append(f"{label}={value}")
+    return ", ".join(parts) if parts else "n/a"
 
 
 def _parse_args() -> argparse.Namespace:
