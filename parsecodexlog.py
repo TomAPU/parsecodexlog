@@ -72,6 +72,52 @@ def parse_codex_log(path: Path) -> List[ParsedMessage]:
     return messages
 
 
+def extract_vm_compile_c_and_upload_flags(
+    messages: Iterable[ParsedMessage],
+    *,
+    default_flags: Optional[List[str]] = None,
+) -> List[List[str]]:
+    """Return deduplicated gcc flag lists used by vm_compile_c_and_upload calls.
+
+    Notes:
+    - Many logs omit `flags`, which means the tool uses its default (usually ["-static"]).
+    - We normalize missing/empty flags to `default_flags` when provided.
+    """
+    if default_flags is None:
+        default_flags = ["-static"]
+
+    seen: set[tuple[str, ...]] = set()
+    out: List[List[str]] = []
+
+    for msg in messages:
+        if msg.type != "function_call":
+            continue
+        if not msg.name:
+            continue
+        if msg.name != "mcp__kernelmcp__vm_compile_c_and_upload":
+            continue
+
+        args = msg.arguments
+        flags: Optional[List[str]] = None
+        if isinstance(args, dict):
+            raw_flags = args.get("flags")
+            if isinstance(raw_flags, list) and all(isinstance(x, str) for x in raw_flags):
+                flags = [x for x in raw_flags if x]
+
+        if not flags:
+            flags = list(default_flags)
+
+        key = tuple(flags)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(flags)
+
+    # stable ordering for reproducibility
+    out.sort(key=lambda xs: (len(xs), xs))
+    return out
+
+
 def _consume_record(
     record: Dict[str, Any],
     lineno: int,
