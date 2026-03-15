@@ -1,12 +1,13 @@
 # parsecodexlog
 
-Lightweight, self-contained parser for Codex CLI JSONL logs. It turns raw log lines into a structured, easy-to-consume list of message objects you can use in scripts or downstream tools—no web UI required.
+Lightweight, self-contained parser for Codex and Claude CLI JSONL logs. It turns raw log lines into a structured, easy-to-consume list of message objects you can use in scripts or downstream tools with one stable ABI—no web UI required.
 
 ## What it does
-- Reads Codex JSONL logs and emits a list of normalized `ParsedMessage` objects.
+- Reads Codex JSONL logs and Claude JSONL logs, auto-detects the format, and emits a list of normalized `ParsedMessage` objects.
 - Correlates `function_call` entries with their matching `function_call_output` by `call_id`, merging them into a single message.
 - Preserves turn context blocks and token usage (`token_count`) events so you can track sandbox/model shifts and billing data, while still skipping encrypted reasoning notes.
 - Safely attempts JSON parsing of function arguments and outputs when they are stringified JSON.
+- For Claude logs, normalizes `assistant/tool_use` plus matching `user/tool_result` records into Codex-shaped `function_call` messages with attached `output`.
 
 ## Usage
 CLI:
@@ -31,7 +32,7 @@ for msg in messages:
 - **JSON coercion:** Arguments/outputs are parsed as JSON when possible; otherwise kept as raw values/strings.
 
 ## Provenance and testing
-This project (code and documentation) was generated with the assistance of an AI model and then exercised on sample Codex logs (e.g., `sample.jsonl`) to validate that parsing and function-call correlation work as described.
+This project (code and documentation) was generated with the assistance of an AI model and then exercised on sample Codex and Claude logs to validate that parsing and function-call correlation work as described.
 
 ## Notes and limitations
 - Only ignores the commonly noisy meta records listed above; adjust filters in `parsecodexlog.py` if you need more or fewer event types.
